@@ -17,6 +17,16 @@
 # and reloads nginx itself (within INTERVAL_SECONDS, default 10s), so this
 # script does not need to trigger a reload.
 #
+# The nginx container runs as a fixed non-root account, UID/GID 1000
+# ("nginx", created via useradd nginx -U in the image) - this is
+# domino-nrpc-proxy's own convention, NOT the UID 101 used by the official
+# nginx:latest image, so don't assume the usual value. When this script
+# runs as root, it chowns the extracted files to that UID/GID so the
+# container can read tls.key despite its restrictive mode. When run as a
+# regular user, chown to another UID isn't possible, so the key is instead
+# made group/world-readable - only do this on a host where that's
+# acceptable, since it exposes the private key more broadly.
+#
 # Usage: ./get_cert_for_nginx.sh [cert]
 #
 #   cert - additionally dump the extracted certificate as text
@@ -24,6 +34,9 @@
 ACME_JSON=data/acme.json
 CERT_FILE=secrets/tls.crt
 KEY_FILE=secrets/tls.key
+
+NGINX_UID=${NGINX_UID:-1000}
+NGINX_GID=${NGINX_GID:-1000}
 
 # Get DOMAIN from .env if present
 if [ -f .env ]; then
@@ -52,6 +65,14 @@ echo "$KEY"  | base64 -d > "$KEY_FILE"
 
 chmod 644 "$CERT_FILE"
 chmod 600 "$KEY_FILE"
+
+if [ "$(id -u)" = "0" ]; then
+  chown "$NGINX_UID:$NGINX_GID" "$CERT_FILE" "$KEY_FILE"
+else
+  echo "Not running as root - cannot chown to $NGINX_UID:$NGINX_GID."
+  echo "Making $KEY_FILE group/world-readable so UID $NGINX_UID can read it."
+  chmod 644 "$KEY_FILE"
+fi
 
 echo "Extracted certificate for [$MATCH_DOMAIN]"
 

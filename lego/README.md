@@ -41,7 +41,13 @@ Either way, lego calls `lego_hook.sh` at three points (via
 - `PRE` - before the order/validation starts.
 - `DEPLOY` - after a certificate has been issued or renewed. Copies the PEM
   cert/key from `$LEGO_PATH/certificates/` to `deployed/tls.crt` and
-  `tls.key`, then runs `nginx -s reload` if nginx is running.
+  `tls.key`. If run as root, `chown`s both to UID/GID 1000 (override with
+  `NGINX_UID`/`NGINX_GID`) - `domino-nrpc-proxy`'s own convention for its
+  non-root `nginx` account, not the UID 101 used by the official
+  `nginx:latest` image (see [traefik/get_cert_for_nginx.sh](../traefik/get_cert_for_nginx.sh)
+  for the same pattern). If not root, falls back to making `tls.key`
+  world-readable instead, with a warning. Finally runs `nginx -s reload` if
+  nginx is running.
 - `POST` - after the run completes.
 
 ## Known rough edge

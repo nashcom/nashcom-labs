@@ -70,8 +70,19 @@ The other routers reuse it via TLS SNI, which is why they only set
 ```bash
 cp env.example .env
 # edit .env and set your domain
+chown -R 1000:1000 config
 docker compose up -d
 ```
+
+The `nginx` service (`domino-nrpc-proxy`) runs as a fixed non-root account -
+UID 1000, group `nginx` (created via `useradd nginx -U` in the image; this
+is `domino-nrpc-proxy`'s own convention, not the UID 101 used by the
+official `nginx:latest` image) - so `config/nginx.conf` needs to be
+readable by UID 1000 on the host.
+`traefik`'s image has no `USER` directive and runs as root, which bypasses
+host permission checks on bind mounts entirely, so `data/` does not need
+any special ownership. Git does not track directory ownership or
+permissions, so this has to be run again after every fresh clone.
 
 Traefik requests the certificate on first HTTPS access. Watch progress with:
 
@@ -206,16 +217,22 @@ Extract them with:
 The script finds the `Certificates[]` entry by domain (main name or SAN,
 default: `DOMAIN` from `.env`, override with `MATCH_DOMAIN=...`),
 base64-decodes its `certificate` and `key` fields, and writes them to
-`secrets/tls.crt` and `secrets/tls.key` (mode 600) as regular PEM files
-nginx can load directly. It does not need to reload nginx itself: the
-container watches `/run/secrets/nginx` for file changes and reloads on its
-own (within `INTERVAL_SECONDS`, default 10s).
+`secrets/tls.crt` and `secrets/tls.key` as regular PEM files nginx can load
+directly. It does not need to reload nginx itself: the container watches
+`/run/secrets/nginx` for file changes and reloads on its own (within
+`INTERVAL_SECONDS`, default 10s).
+
+The `nginx` container runs as a fixed non-root account, UID/GID 1000
+(`nginx`) - `domino-nrpc-proxy`'s own convention, not the UID 101 used by
+the official `nginx:latest` image. If the script is run as root, it
+`chown`s the extracted files to
+`1000:1000` (override with `NGINX_UID`/`NGINX_GID`) so the container can
+read `tls.key` despite its `600` mode. If run as a regular user, it can't
+change ownership, so it falls back to making `tls.key` world-readable
+instead and prints a warning - only acceptable on a host where that's fine.
 
 Note: certificates renew (config: `certificatesduration=720`, i.e. 30 days),
 so the extraction has to be re-run after renewal - e.g. via cron.
-
-If the nginx container runs as a non-root user with a UID different from
-the host user, relax the key file permissions accordingly.
 
 ## ACME configuration
 
@@ -240,6 +257,9 @@ short-lived certificates.
 - `data/acme.json` contains the ACME account key and all certificate
   private keys. `secrets/` contains the extracted key material.
   Both directories and `.env` are excluded from git via `.gitignore`.
+- `config/` is owned by UID 1000 (the `nginx` image's fixed non-root user)
+  rather than world-writable, so only that account - not every local user -
+  can read it.
 - The Docker socket is mounted read-only into the Traefik container
   (required for the Docker provider). Anyone with access to the Traefik
   container effectively has Docker host access.
