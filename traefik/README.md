@@ -12,11 +12,14 @@ deployment - see [Security notes](#security-notes).
 ```bash
 cp env.example .env       # edit .env, set DOMAIN=your.domain
 docker compose up -d
-curl https://whoami.<domain>/
+curl -k https://whoami.<domain>/
 ```
 
 That's it - Traefik gets a certificate automatically and routes to `whoami`.
-Everything below explains how it works and the other ways to reach it.
+`-k` is needed because this defaults to the Let's Encrypt **staging** CA
+(untrusted certs, see [ACME configuration](#acme-configuration)) - drop it
+once you switch to production. Everything below explains how it works and
+the other ways to reach it.
 
 ## Components
 
@@ -135,12 +138,15 @@ flowchart LR
 
 Since DNS for `<domain>` and its subdomains already has to point at the
 host (see [Prerequisites](#prerequisites)), the same hostnames work for
-every path below - only the port changes.
+every path below - only the port changes. The examples use `curl -k`
+because this lab defaults to the Let's Encrypt **staging** CA (see
+[ACME configuration](#acme-configuration)); drop `-k` once switched to
+production.
 
 **1. Via Traefik, host-based routing:**
 
 ```bash
-curl https://whoami.<domain>/
+curl -k https://whoami.<domain>/
 ```
 
 Traefik's own ACME certificate terminates TLS; the request reaches `whoami`
@@ -150,7 +156,7 @@ as plain HTTP inside the Docker network. The echoed `Host:` header is
 **2. Via Traefik, then nginx (chained proxy, path-based):**
 
 ```bash
-curl https://nginx.<domain>/whoami
+curl -k https://nginx.<domain>/whoami
 ```
 
 Traefik terminates TLS and routes to `nginx` by host name; `nginx.conf`'s
@@ -173,8 +179,8 @@ see [Security notes](#security-notes).
 **4. Directly to nginx, bypassing Traefik (ports 88/8443):**
 
 ```bash
-curl http://nginx.<domain>:88/whoami     # plain HTTP
-curl https://nginx.<domain>:8443/whoami  # TLS via the extracted cert
+curl http://nginx.<domain>:88/whoami        # plain HTTP
+curl -k https://nginx.<domain>:8443/whoami  # TLS via the extracted cert
 ```
 
 Reaches `nginx` directly on its own published ports; TLS on 8443 is
@@ -231,22 +237,31 @@ read `tls.key` despite its `600` mode. If run as a regular user, it can't
 change ownership, so it falls back to making `tls.key` world-readable
 instead and prints a warning - only acceptable on a host where that's fine.
 
-Note: certificates renew (config: `certificatesduration=720`, i.e. 30 days),
-so the extraction has to be re-run after renewal - e.g. via cron.
+Note: Let's Encrypt certificates are valid 90 days and Traefik renews them
+~30 days before expiry, so the extraction has to be re-run after each
+renewal - e.g. via cron.
 
 ## ACME configuration
 
-The `le` resolver uses the Let's Encrypt production CA with the TLS-ALPN
-challenge and EC256 keys. `docker-compose.yml` contains commented
-alternatives:
+The `le` resolver uses the TLS-ALPN challenge and EC256 keys. The CA is set
+by `ACME_CASERVER` in `.env` (see `env.example`) and defaults to Let's
+Encrypt **staging** when unset - staging certs are untrusted by
+browsers/curl (hence `-k` throughout this doc) but have much higher rate
+limits, which matters for a lab that gets spun up and torn down repeatedly.
+Set `ACME_CASERVER=https://acme-v02.api.letsencrypt.org/directory` in
+`.env` to switch to Let's Encrypt **production** once the flow is confirmed
+working on staging.
+
+`docker-compose.yml` also contains commented alternatives that aren't
+env-var driven:
 
 - HTTP-01 challenge instead of TLS-ALPN
-- Let's Encrypt staging CA (for testing without rate limits)
-- Private ACME CA (HashiCorp Vault PKI intermediate)
-
-`certificatesduration=720` (hours) tells Traefik the certificate lifetime
-for scheduling renewals - relevant mainly for private CAs issuing
-short-lived certificates.
+- Private ACME CA (HashiCorp Vault PKI intermediate) - comment out the
+  `ACME_CASERVER`-driven line and use this instead, paired with its own
+  commented `certificatesduration` override, since `certificatesduration`
+  (hours) tells Traefik the certificate lifetime for scheduling renewals
+  and only needs setting when it differs from Let's Encrypt's 90-day
+  default.
 
 ## Security notes
 
