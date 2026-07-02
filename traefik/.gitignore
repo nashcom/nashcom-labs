@@ -1,0 +1,11 @@
+# Runtime data - never commit. acme.json contains the ACME account key
+# and all certificate private keys.
+data/*
+!data/.gitkeep
+
+# Extracted TLS certificate and key for nginx
+secrets/*
+!secrets/.gitkeep
+
+# Local environment configuration
+.env

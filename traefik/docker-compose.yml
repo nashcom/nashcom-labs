@@ -1,0 +1,124 @@
+services:
+
+  traefik:
+
+    image: traefik:latest
+    container_name: traefik
+    hostname: traefik
+    restart: always
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+
+    command:
+
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+
+      - --certificatesresolvers.le.acme.email=le@${DOMAIN:-example.com}
+      - --certificatesresolvers.le.acme.storage=/data/acme.json
+      - --certificatesresolvers.le.acme.keytype=EC256
+      - --certificatesresolvers.le.acme.tlschallenge=true
+
+      # - --certificatesresolvers.le.acme.httpchallenge=true
+      # - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+
+      # Use Let's Encrypt staging (higher rate limits, untrusted cert) for testing
+      # - --certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory
+
+      # Use private Vault PKI intermediate instead of Let's Encrypt.
+      # certificatesduration must match the actual TTL (in hours) issued by the
+      # PKI role - it is only used by Traefik to schedule renewal, not to set
+      # the cert's real validity. Uncomment both lines together.
+      # - --certificatesresolvers.le.acme.caserver=https://vault.lab.${DOMAIN:-example.com}/v1/pki-intermediate/acme/directory
+      # - --certificatesresolvers.le.acme.certificatesduration=720
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN:-example.com}`) && (Path(`/`) || PathPrefix(`/api`) || PathPrefix(`/dashboard`))
+      - traefik.http.routers.dashboard.entrypoints=websecure
+      - traefik.http.routers.dashboard.tls=true
+      - traefik.http.routers.dashboard.tls.certresolver=le
+      - traefik.http.routers.dashboard.service=api@internal
+      - traefik.http.routers.dashboard.tls.domains[0].main=${DOMAIN:-example.com}
+      - traefik.http.routers.dashboard.tls.domains[0].sans=traefik.${DOMAIN:-example.com},whoami.${DOMAIN:-example.com},nginx.${DOMAIN:-example.com}
+
+      # Optional: protect the dashboard with basic auth.
+      # Generate the hash with: htpasswd -nB admin
+      # Set DASHBOARD_AUTH in .env (escape any $ in the hash as $$ or quote it)
+      # - traefik.http.middlewares.dashboard-auth.basicauth.users=${DASHBOARD_AUTH}
+      # - traefik.http.routers.dashboard.middlewares=dashboard-auth
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data:/data
+
+  whoami:
+
+    image: traefik/whoami
+    container_name: whoami
+    hostname: whoami
+    restart: always
+
+    ports:
+      - "82:80"
+
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami.rule=Host(`whoami.${DOMAIN:-example.com}`)
+      - traefik.http.routers.whoami.entrypoints=websecure
+      - traefik.http.routers.whoami.tls=true
+      # - traefik.http.routers.whoami.tls.certresolver=le
+      - traefik.http.services.whoami.loadbalancer.server.port=80
+
+  nginx:
+
+    image: domino-nrpc-proxy:latest
+    container_name: nginx
+    hostname: nginx
+    restart: always
+
+    environment:
+      # HTTPS reverse proxy mode with externally managed certificates.
+      # Only relevant as a fallback: the mounted config/nginx.conf below is
+      # used as-is whenever present, ahead of the built-in PROXY_MODE template.
+      - PROXY_MODE=https
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.nginx.rule=Host(`nginx.${DOMAIN:-example.com}`)
+      - traefik.http.routers.nginx.entrypoints=websecure
+      - traefik.http.routers.nginx.tls=true
+      - traefik.http.services.nginx.loadbalancer.server.port=80
+
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+
+    ports:
+      - "88:80"
+      - "8443:443"
+
+    volumes:
+      - ./config:/run/config/nginx
+      - ./secrets:/run/secrets/nginx
+      - ./www:/www
