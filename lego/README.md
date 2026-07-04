@@ -46,8 +46,8 @@ environment - it only falls back to the value below when unset:
 | `LEGO_PEM`           | `true`                  |                                            |
 | `LEGO_PATH`          | `$(pwd)/data`           | ACME account key + issued certificates    |
 | `LEGO_LOG_LEVEL`     | `info`                  | `DEBUG`/`INFO`/`WARN`/`ERROR` - avoid `debug` as a standing default (verbose, not meant for routine production logs) |
-| `LEGO_EMAIL`         | empty                   | e.g. `le@example.com`                     |
-| `LEGO_HTTP_WEBROOT`  | empty                   | e.g. `/local/lego/acme` - set to switch to webroot mode (see below) |
+| `LEGO_EMAIL`         | empty                   | e.g. `le@example.com` - not exported to lego when empty (see below) |
+| `LEGO_HTTP_WEBROOT`  | empty                   | e.g. `/local/lego/acme` - set to switch to webroot mode; not exported to lego when empty (see below) |
 
 `NGINX_UID`/`NGINX_GID` and `DEPLOY_DIR` (used by `init_tls_cert` and the
 `DEPLOY` hook, not passed to lego) default to `1000`/`1000` and
@@ -63,6 +63,20 @@ name - see the comment on `lego_acme()` for why that matters.
 `LEGO_DEPLOY_HOOK` is the one exception - it's always set to
 `"$0 hook DEPLOY"` and isn't meant to be overridden, since that's what
 wires the certificate deployment back into this script.
+
+`LEGO_EMAIL` and `LEGO_HTTP_WEBROOT` are only `export`ed when non-empty,
+unlike every other variable above. lego reads its flags from the
+environment via Go's `os.LookupEnv`, which distinguishes "unset" from
+"set to an empty string" - `export`ing them unconditionally (even as `""`)
+made lego see the flag as explicitly provided with an empty value rather
+than not provided at all. In practice this broke standalone mode: an
+empty, but present, `LEGO_HTTP_WEBROOT` made lego try to build a webroot
+challenge provider with an empty path, failing with `webroot provider ()
+webroot path does not exist`. `lego_configure` now assigns the value
+locally either way (so `lego_request_cert`'s own `[ -z "$LEGO_HTTP_WEBROOT" ]`
+check still works), but only `export`s it - or explicitly `export -n`s it
+if a caller had already exported an empty one - when it's actually
+non-empty.
 
 ## How it works
 
@@ -197,3 +211,18 @@ make repeated local testing safe and meaningful:
   window, so without forcing it, every `renew` call in the loop would
   silently no-op instead of actually exercising the renewal + `DEPLOY`
   hook path.
+
+`test_lego.sh` doesn't set `LEGO_HTTP_WEBROOT` itself, so it tests
+standalone mode by default (same as `lego_cert.sh`'s own default). To
+test webroot mode instead, set it yourself to a safe, writable path when
+invoking the script - not `lego_cert.sh`'s `/local/lego/acme` example,
+which is a root-level path requiring elevated privileges:
+
+```bash
+LEGO_HTTP_WEBROOT=/tmp/lego-webroot ./test_lego.sh
+```
+
+`test_lego.sh` pre-creates `$LEGO_HTTP_WEBROOT/.well-known/acme-challenge`
+when set, in addition to `lego_cert.sh`'s own internal creation - so a
+bad path fails obviously and early rather than however `nginx -c` would
+happen to report it.

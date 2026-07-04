@@ -64,9 +64,16 @@ lego_configure()
   export LEGO_PATH="${LEGO_PATH:-$(pwd)/data}"
   export LEGO_LOG_LEVEL="${LEGO_LOG_LEVEL:-info}"
 
-  # Empty by default - set from the environment to opt in:
-  export LEGO_EMAIL="${LEGO_EMAIL:-}"                # e.g. le@example.com
-  export LEGO_HTTP_WEBROOT="${LEGO_HTTP_WEBROOT:-}"  # e.g. /local/lego/acme - switches to webroot mode when set
+  # Empty by default - set from the environment to opt in. Deliberately
+  # NOT exported when empty: lego reads these via os.LookupEnv, which
+  # distinguishes "unset" from "set to empty string" - export="" would
+  # make lego see the flag as explicitly provided (empty value) rather
+  # than absent, e.g. LEGO_HTTP_WEBROOT="" made lego try to build a
+  # webroot challenge provider with an empty path ("webroot provider ()").
+  LEGO_EMAIL="${LEGO_EMAIL:-}"                # e.g. le@example.com
+  LEGO_HTTP_WEBROOT="${LEGO_HTTP_WEBROOT:-}"  # e.g. /local/lego/acme - switches to webroot mode when set
+  if [ -n "$LEGO_EMAIL" ]; then export LEGO_EMAIL; else export -n LEGO_EMAIL 2>/dev/null; fi
+  if [ -n "$LEGO_HTTP_WEBROOT" ]; then export LEGO_HTTP_WEBROOT; else export -n LEGO_HTTP_WEBROOT 2>/dev/null; fi
 
   # Not overridable - wires lego's DEPLOY hook back into this same script.
   export LEGO_DEPLOY_HOOK="$0 hook DEPLOY"

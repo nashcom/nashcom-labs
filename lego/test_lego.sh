@@ -21,6 +21,15 @@
 #                          normal renewal window, so without forcing it
 #                          "renew" would just be a silent no-op here.
 #
+# lego_cert.sh has two modes, selected by whether LEGO_HTTP_WEBROOT is
+# set (see its README section) - this script doesn't set it, so it tests
+# standalone mode by default, same as lego_cert.sh's own default. To test
+# webroot mode instead, set it yourself to a safe, writable path when
+# invoking this script - NOT lego_cert.sh's /local/lego/acme example,
+# which is a root-level path requiring elevated privileges, e.g.:
+#
+#   LEGO_HTTP_WEBROOT=/tmp/lego-webroot ./test_lego.sh
+#
 # Usage: test_lego.sh
 #
 #   TEST_RENEW_COUNT    - number of renewals to perform before exiting (default 3)
@@ -29,6 +38,14 @@
 
 export DEPLOY_DIR=/deploy
 export LEGO_RENEW_FORCE=true
+
+# lego_cert.sh already creates this itself before starting its temporary
+# nginx (see lego_request_cert), but doing it here too means a missing
+# directory fails obviously and early rather than however nginx -c would
+# report it, if something about this webroot path turns out to be wrong.
+if [ -n "$LEGO_HTTP_WEBROOT" ]; then
+  mkdir -p "$LEGO_HTTP_WEBROOT/.well-known/acme-challenge"
+fi
 
 TEST_RENEW_COUNT="${TEST_RENEW_COUNT:-3}"
 TEST_RENEW_INTERVAL="${TEST_RENEW_INTERVAL:-30}"
