@@ -94,6 +94,14 @@ lego_cert.sh show    # print a short summary (SAN, subject, issuer,
                       # only, not part of the normal init/run/renew flow
 ```
 
+lego (v5) has no separate `renew` subcommand - `lego run` is the only
+one, and it decides internally whether to obtain or renew based on
+whether a certificate resource already exists in `LEGO_PATH`. `run` and
+`renew` above are our own action names for *when* to call this (once at
+startup vs. periodically) - both invoke `lego run`; `LEGO_RENEW_FORCE`
+and friends still work as expected since they're flags of the `run`
+command itself, not of a separate `renew` one.
+
 `init` solves a bootstrap problem: nginx won't start at all if its
 configured `ssl_certificate`/`ssl_certificate_key` files don't exist yet,
 but on first start there's no real certificate until lego successfully
@@ -212,17 +220,18 @@ make repeated local testing safe and meaningful:
   silently no-op instead of actually exercising the renewal + `DEPLOY`
   hook path.
 
-`test_lego.sh` doesn't set `LEGO_HTTP_WEBROOT` itself, so it tests
-standalone mode by default (same as `lego_cert.sh`'s own default). To
-test webroot mode instead, set it yourself to a safe, writable path when
-invoking the script - not `lego_cert.sh`'s `/local/lego/acme` example,
-which is a root-level path requiring elevated privileges:
+`test_lego.sh` tests standalone mode by default (same as `lego_cert.sh`'s
+own default). To test webroot mode instead, set `TEST_WEBROOT_MODE`:
 
 ```bash
-LEGO_HTTP_WEBROOT=/tmp/lego-webroot ./test_lego.sh
+TEST_WEBROOT_MODE=1 ./test_lego.sh
 ```
 
-`test_lego.sh` pre-creates `$LEGO_HTTP_WEBROOT/.well-known/acme-challenge`
-when set, in addition to `lego_cert.sh`'s own internal creation - so a
-bad path fails obviously and early rather than however `nginx -c` would
-happen to report it.
+This points `LEGO_HTTP_WEBROOT` at `TEST_HTTP_WEBROOT` (default
+`/tmp/lego-webroot`, overridable) - a safe, writable path, not
+`lego_cert.sh`'s `/local/lego/acme` example, which is a root-level path
+requiring elevated privileges. `LEGO_HTTP_WEBROOT` can still be set
+directly instead, same as before. Either way, `test_lego.sh` pre-creates
+`$LEGO_HTTP_WEBROOT/.well-known/acme-challenge` once it's set, in addition
+to `lego_cert.sh`'s own internal creation - so a bad path fails obviously
+and early rather than however `nginx -c` would happen to report it.

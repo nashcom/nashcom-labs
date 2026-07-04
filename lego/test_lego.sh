@@ -22,22 +22,33 @@
 #                          "renew" would just be a silent no-op here.
 #
 # lego_cert.sh has two modes, selected by whether LEGO_HTTP_WEBROOT is
-# set (see its README section) - this script doesn't set it, so it tests
-# standalone mode by default, same as lego_cert.sh's own default. To test
-# webroot mode instead, set it yourself to a safe, writable path when
-# invoking this script - NOT lego_cert.sh's /local/lego/acme example,
-# which is a root-level path requiring elevated privileges, e.g.:
+# set (see its README section) - this script tests standalone mode by
+# default, same as lego_cert.sh's own default. To test webroot mode
+# instead, set TEST_WEBROOT_MODE (any non-empty value):
 #
-#   LEGO_HTTP_WEBROOT=/tmp/lego-webroot ./test_lego.sh
+#   TEST_WEBROOT_MODE=1 ./test_lego.sh
+#
+# which points LEGO_HTTP_WEBROOT at TEST_HTTP_WEBROOT below - a safe,
+# writable path, NOT lego_cert.sh's /local/lego/acme example, which is a
+# root-level path requiring elevated privileges. Override
+# TEST_HTTP_WEBROOT itself if you want webroot mode pointed elsewhere.
 #
 # Usage: test_lego.sh
 #
 #   TEST_RENEW_COUNT    - number of renewals to perform before exiting (default 3)
 #   TEST_RENEW_INTERVAL - seconds that must pass between renewals (default 30)
 #   TEST_POLL_INTERVAL  - seconds between "is it time yet" checks (default 5)
+#   TEST_WEBROOT_MODE   - set (any value) to test webroot mode instead of standalone
+#   TEST_HTTP_WEBROOT   - webroot path used when TEST_WEBROOT_MODE is set (default /tmp/lego-webroot)
 
 export DEPLOY_DIR=/deploy
 export LEGO_RENEW_FORCE=true
+
+TEST_HTTP_WEBROOT="${TEST_HTTP_WEBROOT:-/tmp/lego-webroot}"
+
+if [ -n "$TEST_WEBROOT_MODE" ]; then
+  export LEGO_HTTP_WEBROOT="$TEST_HTTP_WEBROOT"
+fi
 
 # lego_cert.sh already creates this itself before starting its temporary
 # nginx (see lego_request_cert), but doing it here too means a missing

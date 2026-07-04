@@ -22,8 +22,14 @@
 #            DEPLOY_DIR - for troubleshooting/testing, not called as
 #            part of the normal init/run/renew flow.
 #
-# run/renew are lego's own subcommands, passed straight through - not a
-# flag or env var lego itself reads.
+# lego (v5) has no separate "renew" subcommand - "lego run" is the only
+# one, and it decides internally whether to obtain or renew based on
+# whether a certificate resource already exists in LEGO_PATH. Our own
+# run/renew actions are therefore both wired to the same "lego run"
+# invocation (see lego_request_cert) - they only differ in when
+# entrypoint.sh is meant to call them, not in what lego itself is told to
+# do. LEGO_RENEW_FORCE etc. are still valid, since they're flags of the
+# "run" command itself, not of a separate "renew" one.
 #
 # lego calls the DEPLOY hook as a separate subprocess (it just execs
 # whatever command string is in LEGO_DEPLOY_HOOK), so it can't call a bash
@@ -185,23 +191,21 @@ show_cert()
   echo
 }
 
-# Shared by the "run" and "renew" actions - only the lego subcommand
-# differs, everything else about launching lego is identical.
+# Shared by the "run" and "renew" actions - both invoke "lego run" (see
+# the note above), lego itself decides obtain vs renew.
 
 lego_request_cert()
 {
-  local action="$1"
-
   mkdir -p "$LEGO_PATH"
 
   if [ -z "$LEGO_HTTP_WEBROOT" ]; then
-    "$LEGO_BIN" "$action"
+    "$LEGO_BIN" run
   else
 
     mkdir -p "$LEGO_HTTP_WEBROOT/.well-known/acme-challenge"
     pkill nginx 2>/dev/null
     nginx -c "$(pwd)/nginx.conf"
-    "$LEGO_BIN" "$action"
+    "$LEGO_BIN" run
     pkill nginx 2>/dev/null
 
   fi
@@ -232,8 +236,8 @@ lego_acme()
 
   case "$action" in
     init)  init_tls_cert ;;
-    run)   lego_request_cert run ;;
-    renew) lego_request_cert renew ;;
+    run)   lego_request_cert ;;
+    renew) lego_request_cert ;;
     show)  show_cert "${DEPLOY_DIR:-/run/secrets/nginx}/tls.crt" ;;
     *)     echo "Unknown action: $action (expected init, run, renew, or show)" >&2; exit 1 ;;
   esac
