@@ -1,10 +1,13 @@
 #!/bin/bash
 
-#!/bin/bash
-
 # Downloads, extracts and calculates SHA256 in a single pass.
 # Note: Extraction happens before the SHA256 comparison.
+#
+# Installs to LEGO_INSTALL_PATH (default /lego) rather than a $PATH
+# directory - matches the real container image, which places it at /lego
+# rather than installing it on PATH.
 
+LEGO_INSTALL_PATH="${LEGO_INSTALL_PATH:-/lego}"
 
 if [ -z "$LEGO_VERSION" ]; then
   LEGO_VERSION="5.2.2"
@@ -59,11 +62,11 @@ InstallLego()
   IFS='|' read -r LEGO_ARCH LEGO_SHA256 <<< "$(GetLegoInfo)"
 
   local LEGO_URL="https://github.com/go-acme/lego/releases/download/v${LEGO_VERSION}/lego_v${LEGO_VERSION}_linux_${LEGO_ARCH}.tar.gz"
-  local LEGO_HASH=$(DownloadAndProcess "$LEGO_URL" "tar -xzO lego > /usr/local/bin/lego" "$LEGO_SHA256")
+  local LEGO_HASH=$(DownloadAndProcess "$LEGO_URL" "tar -xzO lego > $LEGO_INSTALL_PATH" "$LEGO_SHA256")
 
-  chmod 755 /usr/local/bin/lego
+  chmod 755 "$LEGO_INSTALL_PATH"
 
-  echo "Installed lego $(/usr/local/bin/lego --version 2>/dev/null | head -1)"
+  echo "Installed lego $("$LEGO_INSTALL_PATH" --version 2>/dev/null | head -1) at $LEGO_INSTALL_PATH"
   echo "Archive SHA256: $LEGO_HASH"
 }
 
@@ -71,6 +74,6 @@ InstallLego()
 InstallLego
 
 echo
-which lego
-lego -version
+ls -l "$LEGO_INSTALL_PATH"
+"$LEGO_INSTALL_PATH" -version
 echo
