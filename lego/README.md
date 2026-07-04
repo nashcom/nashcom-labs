@@ -123,10 +123,13 @@ selected by whether `LEGO_HTTP_WEBROOT` is set:
   No nginx involved.
 - **Webroot** - set `LEGO_HTTP_WEBROOT` (e.g.
   `LEGO_HTTP_WEBROOT=/local/lego/acme ./lego_cert.sh run`): `lego_cert.sh`
-  instead starts the bundled `nginx.conf` (which serves
-  `/local/lego/acme/.well-known/acme-challenge/`), runs lego, then stops
-  that nginx again. Use this when port 80 needs to keep serving other
-  content and only the challenge path should be handed to lego.
+  creates the `.well-known/acme-challenge` directory under it, then calls
+  lego directly. `lego_cert.sh` never starts, stops, or restarts nginx
+  itself - only reloads it (see `lego_deploy_hook` below) - so nginx has
+  to already be running and already serving that path from the same
+  webroot before this runs; that's whoever starts nginx in the first
+  place (`entrypoint.sh` in the real image, `test_lego.sh` for this demo -
+  see its README section), not `lego_cert.sh`'s job.
 
 Either way, lego calls back into `lego_cert.sh` after a certificate has
 been issued or renewed, via `LEGO_DEPLOY_HOOK`, set to
@@ -221,17 +224,32 @@ make repeated local testing safe and meaningful:
   hook path.
 
 `test_lego.sh` tests standalone mode by default (same as `lego_cert.sh`'s
-own default). To test webroot mode instead, set `TEST_WEBROOT_MODE`:
+own default). Pass `-webroot` to test webroot mode instead:
 
 ```bash
-TEST_WEBROOT_MODE=1 ./test_lego.sh
+./test_lego.sh -webroot
 ```
 
 This points `LEGO_HTTP_WEBROOT` at `TEST_HTTP_WEBROOT` (default
 `/tmp/lego-webroot`, overridable) - a safe, writable path, not
 `lego_cert.sh`'s `/local/lego/acme` example, which is a root-level path
 requiring elevated privileges. `LEGO_HTTP_WEBROOT` can still be set
-directly instead, same as before. Either way, `test_lego.sh` pre-creates
-`$LEGO_HTTP_WEBROOT/.well-known/acme-challenge` once it's set, in addition
-to `lego_cert.sh`'s own internal creation - so a bad path fails obviously
-and early rather than however `nginx -c` would happen to report it.
+directly instead of using `-webroot`. Either way, `test_lego.sh`
+pre-creates `$LEGO_HTTP_WEBROOT/.well-known/acme-challenge` once it's
+set, so a bad path fails obviously and early rather than however
+`nginx -c` would happen to report it.
+
+`lego_cert.sh` never starts nginx itself (see [How it works](#how-it-works))
+- only reloads it - so in `-webroot` mode `test_lego.sh` starts a real
+one itself, via `start_nginx`, right after `init_cert` has created a
+placeholder `tls.crt`/`tls.key` for it to load. That nginx serves
+`/.well-known/acme-challenge/` from `TEST_HTTP_WEBROOT` for lego's
+challenge, and terminates TLS on `:443` using whatever's currently in
+`DEPLOY_DIR` - so `lego_deploy_hook`'s `nginx -s reload` after each
+`run`/`renew` has something real to reload, not nothing. `stop_nginx`
+shuts it down at the end. Needs a real `nginx` binary on `$PATH`;
+standalone mode does not. No custom `pid` directive is set in the
+generated config, deliberately - relying on nginx's own compiled-in
+default means the bare `nginx -s reload` `lego_deploy_hook` calls (no
+`-c`) resolves to the same pidfile this script's own `nginx -c ...` start
+used.

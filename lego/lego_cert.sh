@@ -193,22 +193,23 @@ show_cert()
 
 # Shared by the "run" and "renew" actions - both invoke "lego run" (see
 # the note above), lego itself decides obtain vs renew.
+#
+# lego_cert.sh never starts, stops, or restarts nginx - only reloads it
+# (see lego_deploy_hook). In webroot mode, nginx is assumed to already be
+# running and already serving /.well-known/acme-challenge/ from
+# LEGO_HTTP_WEBROOT - that's whoever's job it is to start nginx in the
+# first place (entrypoint.sh in the real image, test_lego.sh for this
+# demo), not lego_cert.sh's.
 
 lego_request_cert()
 {
   mkdir -p "$LEGO_PATH"
 
-  if [ -z "$LEGO_HTTP_WEBROOT" ]; then
-    "$LEGO_BIN" run
-  else
-
+  if [ -n "$LEGO_HTTP_WEBROOT" ]; then
     mkdir -p "$LEGO_HTTP_WEBROOT/.well-known/acme-challenge"
-    pkill nginx 2>/dev/null
-    nginx -c "$(pwd)/nginx.conf"
-    "$LEGO_BIN" run
-    pkill nginx 2>/dev/null
-
   fi
+
+  "$LEGO_BIN" run
 }
 
 # Standalone-CLI-specific: argument parsing and dispatch. Not needed if

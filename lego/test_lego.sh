@@ -23,32 +23,52 @@
 #
 # lego_cert.sh has two modes, selected by whether LEGO_HTTP_WEBROOT is
 # set (see its README section) - this script tests standalone mode by
-# default, same as lego_cert.sh's own default. To test webroot mode
-# instead, set TEST_WEBROOT_MODE (any non-empty value):
+# default, same as lego_cert.sh's own default. Pass -webroot to test
+# webroot mode instead:
 #
-#   TEST_WEBROOT_MODE=1 ./test_lego.sh
+#   ./test_lego.sh -webroot
 #
 # which points LEGO_HTTP_WEBROOT at TEST_HTTP_WEBROOT below - a safe,
 # writable path, NOT lego_cert.sh's /local/lego/acme example, which is a
 # root-level path requiring elevated privileges. Override
 # TEST_HTTP_WEBROOT itself if you want webroot mode pointed elsewhere.
 #
-# Usage: test_lego.sh
+# lego_cert.sh never starts nginx itself (see lego_request_cert) - only
+# reloads it. So in -webroot mode, THIS script starts a real nginx
+# (start_nginx below) after init_cert has created a placeholder
+# tls.crt/tls.key for it to load: one server block serves
+# /.well-known/acme-challenge/ from TEST_HTTP_WEBROOT for lego's
+# challenge, another terminates TLS on :443 using whatever's currently in
+# DEPLOY_DIR - so lego_deploy_hook's "nginx -s reload" after each
+# run/renew has something real to reload, not just a throwaway process.
+# Needs a real nginx binary on $PATH. No custom "pid" directive is set,
+# deliberately: leaving it at nginx's own compiled-in default means the
+# bare "nginx -s reload" lego_deploy_hook calls (no -c) resolves to the
+# same pidfile this script's own "nginx -c ..." start used.
+#
+# Usage: test_lego.sh [-webroot]
 #
 #   TEST_RENEW_COUNT    - number of renewals to perform before exiting (default 3)
 #   TEST_RENEW_INTERVAL - seconds that must pass between renewals (default 30)
 #   TEST_POLL_INTERVAL  - seconds between "is it time yet" checks (default 5)
-#   TEST_WEBROOT_MODE   - set (any value) to test webroot mode instead of standalone
-#   TEST_HTTP_WEBROOT   - webroot path used when TEST_WEBROOT_MODE is set (default /tmp/lego-webroot)
+#   TEST_HTTP_WEBROOT   - webroot path used with -webroot (default /tmp/lego-webroot)
 
 export DEPLOY_DIR=/deploy
 export LEGO_RENEW_FORCE=true
 
 TEST_HTTP_WEBROOT="${TEST_HTTP_WEBROOT:-/tmp/lego-webroot}"
 
-if [ -n "$TEST_WEBROOT_MODE" ]; then
-  export LEGO_HTTP_WEBROOT="$TEST_HTTP_WEBROOT"
-fi
+case "$1" in
+  -webroot)
+    export LEGO_HTTP_WEBROOT="$TEST_HTTP_WEBROOT"
+    ;;
+  "")
+    ;;
+  *)
+    echo "Usage: test_lego.sh [-webroot]" >&2
+    exit 1
+    ;;
+esac
 
 # lego_cert.sh already creates this itself before starting its temporary
 # nginx (see lego_request_cert), but doing it here too means a missing
@@ -80,6 +100,80 @@ show_cert()
 {
   header "$1"
   ./lego_cert.sh show
+}
+
+TEST_NGINX_CONF=/tmp/test_lego_nginx.conf
+
+# Renders TEST_NGINX_CONF from a template (sed substitution, not a bash
+# heredoc directly, so nginx's own $uri/$host variables aren't mistaken
+# for shell variables) and starts nginx with it. Only called in -webroot
+# mode - see the header comment for why this script (not lego_cert.sh)
+# owns nginx's lifecycle.
+start_nginx()
+{
+  echo "=== starting nginx (webroot mode demo site) ==="
+
+  sed -e "s#__WEBROOT__#$TEST_HTTP_WEBROOT#g" -e "s#__DEPLOY_DIR__#$DEPLOY_DIR#g" > "$TEST_NGINX_CONF" <<'NGINX_CONF_EOF'
+worker_processes auto;
+
+events
+{
+    worker_connections 1024;
+}
+
+http
+{
+    default_type  application/octet-stream;
+
+    sendfile      on;
+    keepalive_timeout 65;
+
+    server
+    {
+        listen 80 default_server;
+        listen [::]:80 default_server;
+
+        server_name _;
+
+        location ^~ /.well-known/acme-challenge/
+        {
+            root __WEBROOT__;
+            default_type text/plain;
+            access_log off;
+            log_not_found off;
+            try_files $uri =404;
+        }
+
+        location /
+        {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    server
+    {
+        listen 443 ssl;
+        server_name _;
+
+        ssl_certificate     __DEPLOY_DIR__/tls.crt;
+        ssl_certificate_key __DEPLOY_DIR__/tls.key;
+
+        location /
+        {
+            default_type text/plain;
+            return 200 "test_lego.sh demo site OK\n";
+        }
+    }
+}
+NGINX_CONF_EOF
+
+  nginx -c "$TEST_NGINX_CONF"
+}
+
+stop_nginx()
+{
+  echo "=== stopping nginx ==="
+  nginx -c "$TEST_NGINX_CONF" -s quit 2>/dev/null
 }
 
 # All three functions are named/shaped to match domino-nrpc-proxy's own
@@ -124,11 +218,20 @@ trap 'RUNNING=0' SIGTERM SIGINT
 
 COUNT=0
 init_cert
+
+if [ -n "$LEGO_HTTP_WEBROOT" ]; then
+  start_nginx
+fi
+
 run_cert
 
 while [ "$RUNNING" = "1" ] && [ "$COUNT" -lt "$TEST_RENEW_COUNT" ]; do
   renew_check
   sleep "$TEST_POLL_INTERVAL"
 done
+
+if [ -n "$LEGO_HTTP_WEBROOT" ]; then
+  stop_nginx
+fi
 
 echo "=== done ($COUNT renewals) ==="
